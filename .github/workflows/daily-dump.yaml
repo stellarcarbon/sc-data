@@ -79,26 +79,22 @@ jobs:
       id: check-schema-change
       run: |
         PREV_VER=$(echo "$MATCHED_KEY" | grep -o '[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?$')
-
-        # Extract semver prefixes
         CUR_PREFIX=$(echo "$CUR_VER" | cut -d. -f1,2)
         PREV_PREFIX=$(echo "$PREV_VER" | cut -d. -f1,2)
 
         if [ "$REV_BEFORE" != "$REV_AFTER" ] && [ "$CUR_PREFIX" != "$PREV_PREFIX" ]; then
           DATA_COMMIT=$(git rev-parse --verify HEAD)
+          python .github/scripts/render-template.py \
+            .github/templates/schema-warning.md schema-warning.out \
+            cur_ver="$CUR_VER" prev_ver="$PREV_VER" prev_prefix="$PREV_PREFIX" \
+            data_commit="$DATA_COMMIT" rev_before="$REV_BEFORE"
 
-          WARN=$(cat << EOF
-          sc-audit v$CUR_VER applies migrations since v$PREV_VER. Tag the previous HEAD as:
-          ```
-          git tag -a sc-audit-v$PREV_PREFIX $DATA_COMMIT -m "sc-audit schema $REV_BEFORE"
-          git push --tags
-          ```
-          EOF
-          )
-          echo "::warning::$WARN"
-          echo "warning=$WARN" >> "$GITHUB_OUTPUT"
+          echo "::warning::$(cat schema-warning.out)"
+          echo "warning<<EOF" >> "$GITHUB_OUTPUT"
+          cat schema-warning.out >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
         else
-          echo "warning='DB schema remains backwards-compatible'" >> "$GITHUB_OUTPUT"
+          echo "warning=DB schema remains backwards-compatible" >> "$GITHUB_OUTPUT"
         fi
       env:
         CUR_VER: ${{ steps.install-scaudit.outputs.ver }}
@@ -138,26 +134,15 @@ jobs:
     # --------------------- SUMMARY ---------------------
     - name: Write job summary
       run: |
-        echo "### Daily Audit Dump Summary" >> "$GITHUB_STEP_SUMMARY"
-        echo "" >> "$GITHUB_STEP_SUMMARY"
-        echo "**sc-audit version:** ${{ steps.install-scaudit.outputs.ver }}" >> "$GITHUB_STEP_SUMMARY"
-        echo "**Schema revision before upgrade:** ${{ steps.schema-upgrade.outputs.rev_before }}" >> "$GITHUB_STEP_SUMMARY"
-        echo "**Schema revision after upgrade:** ${{ steps.get-revision.outputs.revision }}" >> "$GITHUB_STEP_SUMMARY"
-        echo "" >> "$GITHUB_STEP_SUMMARY"
+        python .github/scripts/render-template.py \
+          .github/templates/job-summary.md job-summary.out \
+          ver="${{ steps.install-scaudit.outputs.ver }}" \
+          rev_after="${{ steps.get-revision.outputs.revision }}" \
+          rev_before="${{ steps.schema-upgrade.outputs.rev_before }}" \
+          warning="${{ steps.check-schema-change.outputs.warning }}" \
+          commit_output="$(cat commit-output.txt)"
 
-        echo "**Git commit output:**" >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        cat "$GITHUB_WORKSPACE/commit-output.txt" >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-        echo "" >> "$GITHUB_STEP_SUMMARY"
-        if [[ "${{ steps.check-schema-change.outputs.warning }}" == sc-audit\ v* ]]; then
-          echo "**⚠️ Schema migration warning:**" >> "$GITHUB_STEP_SUMMARY"
-        else
-          echo "**ℹ️ Schema check result:**" >> "$GITHUB_STEP_SUMMARY"
-        fi
-        echo "" >> "$GITHUB_STEP_SUMMARY"
-        echo "${{ steps.check-schema-change.outputs.warning }}" >> "$GITHUB_STEP_SUMMARY"
+        cat job-summary.out >> "$GITHUB_STEP_SUMMARY"
 
     # --------------------- DEBUG ---------------------
     - name: Debug cache keys

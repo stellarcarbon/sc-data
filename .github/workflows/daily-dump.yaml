@@ -40,8 +40,7 @@ jobs:
 
     - name: Save pip cache (if new version)
       uses: actions/cache/save@v4
-      if: steps.pip-restore.outputs.cache-matched-key !=
-          'pip-${{ runner.os }}-sc-audit-${{ steps.install-scaudit.outputs.ver }}'
+      if: ${{ !endsWith(steps.pip-restore.outputs.cache-matched-key, steps.install-scaudit.outputs.ver) }}
       with:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-sc-audit-${{ steps.install-scaudit.outputs.ver }}
@@ -83,8 +82,7 @@ jobs:
 
     - name: Save DB cache (if changed)
       uses: actions/cache/save@v4
-      if: steps.db-restore.outputs.cache-matched-key !=
-          'sc-audit-db-${{ runner.os }}-${{ steps.db-size.outputs.size }}'
+      if: ${{ !endsWith(steps.db-restore.outputs.cache-matched-key, steps.db-size.outputs.size) }}
       with:
         path: ./sc-audit.sqlite3
         key: sc-audit-db-${{ runner.os }}-${{ steps.db-size.outputs.size }}
@@ -101,3 +99,12 @@ jobs:
           git commit -m "sc-audit schema $SC_AUDIT_REVISION"
           git push
         fi
+
+    # --------------------- DEBUG ---------------------
+    - name: Debug cache keys
+      if: ${{ github.event_name == 'workflow_dispatch' }}
+      run: |
+        echo "Matched pip key: ${{ steps.pip-restore.outputs.cache-matched-key }}"
+        echo "Generated pip key: pip-${{ runner.os }}-sc-audit-${{ steps.install-scaudit.outputs.ver }}"
+        echo "Matched db key:  ${{ steps.db-restore.outputs.cache-matched-key }}"
+        echo "Generated db key: sc-audit-db-${{ runner.os }}-${{ steps.db-size.outputs.size }}"

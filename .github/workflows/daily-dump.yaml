@@ -24,7 +24,7 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.cache/pip
-        key: pip-NOCACHE
+        key: DUMMY
         restore-keys: |
           pip-${{ runner.os }}-sc-audit-
 
@@ -35,7 +35,6 @@ jobs:
         pip install --upgrade sc-audit
         ver=$(python -m pip show sc-audit | awk '/^Version:/ {print $2}')
         echo "Installed sc-audit v$ver"
-        echo "SCAUDIT_VERSION=$ver" >> "$GITHUB_ENV"
         echo "ver=$ver" >> "$GITHUB_OUTPUT"
 
     - name: Save pip cache (if new version)
@@ -51,13 +50,17 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: ./sc-audit.sqlite3
-        key: sc-audit-db-NOCACHE
+        key: DUMMY
         restore-keys: |
           sc-audit-db-${{ runner.os }}-
 
     # --------------------- MAIN WORK ---------------------
     - name: Upgrade schema
-      run: sc-audit schema upgrade
+      id: schema-upgrade
+      run: |
+        oldrev=$(sc-audit schema current | awk '{print $1}')
+        echo "rev_before=$oldrev" >> "$GITHUB_OUTPUT"
+        sc-audit schema upgrade
 
     - name: Catch up
       run: sc-audit catch-up
@@ -70,8 +73,38 @@ jobs:
       run: |
           rev=$(sc-audit schema current | awk '{print $1}')
           echo "Alembic revision: $rev"
-          echo "SC_AUDIT_REVISION=$rev" >> "$GITHUB_ENV"
           echo "revision=$rev" >> "$GITHUB_OUTPUT"
+
+    - name: Warn if new incompatible schema was applied
+      id: check-schema-change
+      run: |
+        PREV_VER=$(echo "$MATCHED_KEY" | grep -o '[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?$')
+
+        # Extract semver prefixes
+        CUR_PREFIX=$(echo "$CUR_VER" | cut -d. -f1,2)
+        PREV_PREFIX=$(echo "$PREV_VER" | cut -d. -f1,2)
+
+        if [ "$REV_BEFORE" != "$REV_AFTER" ] && [ "$CUR_PREFIX" != "$PREV_PREFIX" ]; then
+          DATA_COMMIT=$(git rev-parse --verify HEAD)
+
+          WARN=$(cat << EOF
+          sc-audit v$CUR_VER applies migrations since v$PREV_VER. Tag the previous HEAD as:
+          ```
+          git tag -a sc-audit-v$PREV_PREFIX $DATA_COMMIT -m "sc-audit schema $REV_BEFORE"
+          git push --tags
+          ```
+          EOF
+          )
+          echo "::warning::$WARN"
+          echo "warning=$WARN" >> "$GITHUB_OUTPUT"
+        else
+          echo "warning='DB schema remains backwards-compatible'" >> "$GITHUB_OUTPUT"
+        fi
+      env:
+        CUR_VER: ${{ steps.install-scaudit.outputs.ver }}
+        MATCHED_KEY: ${{ steps.pip-restore.outputs.cache-matched-key }}
+        REV_BEFORE: ${{ steps.schema-upgrade.outputs.rev_before }}
+        REV_AFTER: ${{ steps.get-revision.outputs.revision }}
 
     # --------------------- DB CACHE SAVE ---------------------
     - name: Compute DB size
@@ -94,11 +127,37 @@ jobs:
         git config user.email "actions@github.com"
         git add sc-audit/*.ndjson
         if git diff --cached --quiet; then
-          echo "No changes to commit."
+          echo "No changes to commit." | tee commit-output.txt
         else
-          git commit -m "sc-audit schema $SC_AUDIT_REVISION"
-          git push
+          git commit -m "sc-audit schema $SC_AUDIT_REVISION" 2>&1 | tee commit-output.txt
+          git push 2>&1 | tee -a commit-output.txt
         fi
+      env:
+        SC_AUDIT_REVISION: ${{ steps.get-revision.outputs.revision }}
+
+    # --------------------- SUMMARY ---------------------
+    - name: Write job summary
+      run: |
+        echo "### Daily Audit Dump Summary" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "**sc-audit version:** ${{ steps.install-scaudit.outputs.ver }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "**Schema revision before upgrade:** ${{ steps.schema-upgrade.outputs.rev_before }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "**Schema revision after upgrade:** ${{ steps.get-revision.outputs.revision }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+
+        echo "**Git commit output:**" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        cat "$GITHUB_WORKSPACE/commit-output.txt" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        if [[ "${{ steps.check-schema-change.outputs.warning }}" == sc-audit\ v* ]]; then
+          echo "**⚠️ Schema migration warning:**" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "**ℹ️ Schema check result:**" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "${{ steps.check-schema-change.outputs.warning }}" >> "$GITHUB_STEP_SUMMARY"
 
     # --------------------- DEBUG ---------------------
     - name: Debug cache keys

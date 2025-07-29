@@ -34,6 +34,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install --upgrade sc-audit
         ver=$(python -m pip show sc-audit | awk '/^Version:/ {print $2}')
+        echo "Installed sc-audit v$ver"
         echo "SCAUDIT_VERSION=$ver" >> "$GITHUB_ENV"
         echo "ver=$ver" >> "$GITHUB_OUTPUT"
 
@@ -69,6 +70,7 @@ jobs:
       id: get-revision
       run: |
           rev=$(sc-audit schema current | awk '{print $1}')
+          echo "Alembic revision: $rev"
           echo "SC_AUDIT_REVISION=$rev" >> "$GITHUB_ENV"
           echo "revision=$rev" >> "$GITHUB_OUTPUT"
 
@@ -98,3 +100,4 @@ jobs:
         else
           git commit -m "sc-audit schema $SC_AUDIT_REVISION"
           git push
+        fi

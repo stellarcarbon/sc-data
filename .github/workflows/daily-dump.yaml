@@ -1,0 +1,99 @@
+name: Daily Audit Dump
+
+on:
+  schedule:
+    - cron: '47 14 * * *'  # Daily at 14:47 UTC
+
+jobs:
+  dump-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout sc-data
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    # --------------------- PIP CACHE ---------------------
+    - name: Restore pip cache
+      id: pip-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-NOCACHE
+        restore-keys: |
+          pip-${{ runner.os }}-sc-audit-
+
+    - name: Install latest sc-audit
+      id: install-scaudit
+      run: |
+        python -m pip install --upgrade pip
+        pip install --upgrade sc-audit
+        ver=$(python -m pip show sc-audit | awk '/^Version:/ {print $2}')
+        echo "SCAUDIT_VERSION=$ver" >> "$GITHUB_ENV"
+        echo "ver=$ver" >> "$GITHUB_OUTPUT"
+
+    - name: Save pip cache (if new version)
+      uses: actions/cache/save@v4
+      if: steps.pip-restore.outputs.cache-matched-key !=
+          'pip-${{ runner.os }}-sc-audit-${{ steps.install-scaudit.outputs.ver }}'
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-sc-audit-${{ steps.install-scaudit.outputs.ver }}
+
+    # --------------------- DB CACHE ---------------------
+    - name: Restore SQLite DB
+      id: db-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ./sc-audit.sqlite3
+        key: sc-audit-db-NOCACHE
+        restore-keys: |
+          sc-audit-db-${{ runner.os }}-
+
+    # --------------------- MAIN WORK ---------------------
+    - name: Upgrade schema
+      run: sc-audit schema upgrade
+
+    - name: Catch up
+      run: sc-audit catch-up
+
+    - name: Dump NDJSON files
+      run: sc-audit backup dump ./sc-audit
+
+    - name: Get current schema revision
+      id: get-revision
+      run: |
+          rev=$(sc-audit schema current | awk '{print $1}')
+          echo "SC_AUDIT_REVISION=$rev" >> "$GITHUB_ENV"
+          echo "revision=$rev" >> "$GITHUB_OUTPUT"
+
+    # --------------------- DB CACHE SAVE ---------------------
+    - name: Compute DB size
+      id: db-size
+      run: |
+        size=$(stat --format='%s' ./sc-audit.sqlite3 || echo 0)
+        echo "size=$size" >> "$GITHUB_OUTPUT"
+
+    - name: Save DB cache (if changed)
+      uses: actions/cache/save@v4
+      if: steps.db-restore.outputs.cache-matched-key !=
+          'sc-audit-db-${{ runner.os }}-${{ steps.db-size.outputs.size }}'
+      with:
+        path: ./sc-audit.sqlite3
+        key: sc-audit-db-${{ runner.os }}-${{ steps.db-size.outputs.size }}
+
+    # --------------------- GIT COMMIT ---------------------
+    - name: Commit new data
+      run: |
+        git config user.name  "github-actions"
+        git config user.email "actions@github.com"
+        git add sc-audit/*.ndjson
+        if git diff --cached --quiet; then
+          echo "No changes to commit."
+        else
+          git commit -m "sc-audit schema $SC_AUDIT_REVISION"
+          git push

@@ -3,6 +3,7 @@ name: Daily Audit Dump
 on:
   schedule:
     - cron: '47 14 * * *'  # Daily at 14:47 UTC
+  workflow_dispatch:
 
 jobs:
   dump-audit:

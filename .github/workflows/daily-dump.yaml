@@ -64,6 +64,8 @@ jobs:
 
     - name: Catch up
       run: sc-audit catch-up
+      env:
+        SC_OBSRVR_FLOW_DB_URI: ${{ secrets.SC_OBSRVR_FLOW_DB_URI }}
 
     - name: Dump NDJSON files
       run: sc-audit backup dump ./sc-audit

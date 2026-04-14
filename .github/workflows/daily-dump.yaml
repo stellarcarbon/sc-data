@@ -6,22 +6,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # for GitHub Dependency Graph API
+      id-token: write # for OIDC authentication to PG Atlas
+    steps:
+      - uses: SCF-Public-Goods-Maintenance/pg-atlas-sbom-action@main
+
   dump-audit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout sc-data
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: '3.x'
 
     # --------------------- PIP CACHE ---------------------
     - name: Restore pip cache
       id: pip-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         path: ~/.cache/pip
         key: DUMMY
@@ -38,7 +48,7 @@ jobs:
         echo "ver=$ver" >> "$GITHUB_OUTPUT"
 
     - name: Save pip cache (if new version)
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       if: ${{ !endsWith(steps.pip-restore.outputs.cache-matched-key, steps.install-scaudit.outputs.ver) }}
       with:
         path: ~/.cache/pip
@@ -47,7 +57,7 @@ jobs:
     # --------------------- DB CACHE ---------------------
     - name: Restore SQLite DB
       id: db-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         path: ./sc-audit.sqlite3
         key: DUMMY
@@ -112,7 +122,7 @@ jobs:
         echo "size=$size" >> "$GITHUB_OUTPUT"
 
     - name: Save DB cache (if changed)
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       if: ${{ !endsWith(steps.db-restore.outputs.cache-matched-key, steps.db-size.outputs.size) }}
       with:
         path: ./sc-audit.sqlite3
@@ -121,8 +131,8 @@ jobs:
     # --------------------- GIT COMMIT ---------------------
     - name: Commit new data
       run: |
-        git config user.name  "github-actions"
-        git config user.email "actions@github.com"
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add sc-audit/*.ndjson
         if git diff --cached --quiet; then
           echo "No changes to commit." | tee commit-output.txt
